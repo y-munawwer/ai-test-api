@@ -2,11 +2,67 @@ const express = require('express');
 const axios = require('axios');
 const { Readable } = require('stream');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const app = express();
 const PORT = 3000;
-
+const upload = multer({ dest: 'uploads/' });
 app.use(express.json());
 app.use(cors());
+
+// Utility: Convert image file to base64
+const imageToBase64 = (filePath) => {
+  const mimeType = path.extname(filePath).substring(1);
+  const data = fs.readFileSync(filePath);
+  return data.toString('base64');
+};
+
+app.post('/vision-generate', upload.single('image'), async (req, res) => {
+  try {
+    const prompt = req.body.prompt || 'Describe the image';
+    let base64Image = '';
+
+    // Case 1: Image uploaded via file
+    if (req.file) {
+      base64Image = imageToBase64(req.file.path);
+      fs.unlinkSync(req.file.path); // cleanup temp file
+    }
+    // Case 2: Base64 string provided in body
+    else if (req.body.base64) {
+      const b64 = req.body.base64;
+      if (/^[A-Za-z0-9+/=\n\r]+$/.test(b64)) {
+        base64Image = b64;
+      } else {
+        return res.status(400).json({ error: 'Invalid base64 string' });
+      }
+    } else {
+      return res.status(400).json({ error: 'No image or base64 input provided' });
+    }
+
+    // Send to Ollama llama3.2-vision
+    const ollamaRes = await axios.post(
+      'http://localhost:11434/api/generate',
+      {
+        model: 'llama3.2-vision',
+        prompt,
+        images: [base64Image]
+      },
+      { responseType: 'stream' }
+    );
+
+    // Stream back the response to client
+    res.setHeader('Content-Type', 'text/plain');
+    ollamaRes.data.pipe(res);
+  } catch (err) {
+    console.error('Error:', err.message);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
+
+
+
 app.post('/generate', async (req, res) => {
   const { prompt } = req.body;
 console.log("request recieved")
